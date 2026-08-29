@@ -21,20 +21,17 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
 
-      - name: Get Dependencies
-        run: flutter pub get
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Build with Gradle
+        run: ./gradlew assembleRelease
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: app/build/outputs/apk/release/*.apk
