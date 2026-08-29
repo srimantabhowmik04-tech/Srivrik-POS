@@ -1,69 +1,108 @@
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
-    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
-}
+package com.atoz.pos.ui
 
-android {
-    namespace = "com.atoz.pos"
-    compileSdk = 35
+import android.app.Application
+import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.atoz.pos.data.local.AppDatabase
+import com.atoz.pos.data.model.*
+import com.atoz.pos.util.PosUtils
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 
-    defaultConfig {
-        applicationId = "com.atoz.pos"
-        minSdk = 24
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+data class CartItem(val product: Product, var quantity: Int)
+
+class PosViewModel(application: Application) : AndroidViewModel(application) {
+    private val dao = AppDatabase.getDatabase(application).posDao()
+
+    val products = dao.getAllProducts().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    val invoices = dao.getAllInvoices().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    val customers = dao.getAllCustomers().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    val storeProfile = dao.getStoreProfile().stateIn(viewModelScope, SharingStarted.Lazily, StoreProfile())
+
+    val cart = MutableStateFlow<List<CartItem>>(emptyList())
+
+    fun addToCart(product: Product) {
+        val current = cart.value.toMutableList()
+        val index = current.indexOfFirst { it.product.id == product.id }
+        if (index != -1) {
+            current[index] = current[index].copy(quantity = current[index].quantity + 1)
+        } else {
+            current.add(CartItem(product, 1))
+        }
+        cart.value = current
     }
 
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+    fun removeFromCart(product: Product) {
+        val current = cart.value.toMutableList()
+        val index = current.indexOfFirst { it.product.id == product.id }
+        if (index != -1) {
+            if (current[index].quantity > 1) {
+                current[index] = current[index].copy(quantity = current[index].quantity - 1)
+            } else {
+                current.removeAt(index)
+            }
+        }
+        cart.value = current
+    }
+
+    fun clearCart() {
+        cart.value = emptyList()
+    }
+
+    fun saveProduct(name: String, barcode: String, purchase: Double, mrp: Double, sell: Double, stock: Int) {
+        viewModelScope.launch {
+            dao.insertProduct(Product(0, name, barcode, purchase, mrp, sell, stock))
         }
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+
+    fun addStock(product: Product, extra: Int) {
+        viewModelScope.launch {
+            dao.updateProduct(product.copy(stockQuantity = product.stockQuantity + extra))
+        }
     }
-    kotlinOptions {
-        jvmTarget = "17"
+
+    fun saveCustomer(name: String, phone: String, due: Double = 0.0) {
+        viewModelScope.launch {
+            dao.insertCustomer(Customer(0, name, phone, due))
+        }
     }
-    buildFeatures {
-        compose = true
+
+    fun updateStoreProfile(profile: StoreProfile) {
+        viewModelScope.launch {
+            dao.saveProfile(profile)
+        }
     }
-}
 
-dependencies {
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.activity.compose)
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.material.icons.extended)
+    fun checkout(phone: String, paymentMode: String, isPaid: Boolean, onComplete: (Long) -> Unit) {
+        viewModelScope.launch {
+            val total = cart.value.sumOf { it.product.sellingPrice * it.quantity }
+            val terminal = storeProfile.value?.terminalId ?: "Mobile-1"
+            val invoiceId = dao.insertInvoice(Invoice(0, phone, total, paymentMode, isPaid, terminal))
 
-    // Room Database
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+            cart.value.forEach { item ->
+                dao.updateProduct(
+                    item.product.copy(
+                        stockQuantity = item.product.stockQuantity - item.quantity,
+                        lastSoldTimestamp = System.currentTimeMillis()
+                    )
+                )
+            }
 
-    // QR Code Generator
-    implementation("com.google.zxing:core:3.5.3")
+            if (paymentMode == "DUE" && phone.isNotBlank()) {
+                val existingCustomer = customers.value.find { it.phone == phone }
+                if (existingCustomer != null) {
+                    dao.updateCustomer(existingCustomer.copy(totalDue = existingCustomer.totalDue + total))
+                } else {
+                    dao.insertCustomer(Customer(0, "Customer $phone", phone, total))
+                }
+            }
 
-    // Coil for Image Loading
-    implementation("io.coil-kt:coil-compose:2.7.0")
+            clearCart()
+            onComplete(invoiceId)
+        }
+    }
 
-    // CameraX & Barcode Scanning
-    implementation("com.google.mlkit:barcode-scanning:17.3.0")
-    implementation("androidx.camera:camera-camera2:1.4.1")
-    implementation("androidx.camera:camera-lifecycle:1.4.1")
-    implementation("androidx.camera:camera-view:1.4.1")
+    fun exportBackup(uri: Uri): Boolean = PosUtils.exportDatabase(getApplication(), uri)
+    fun importBackup(uri: Uri): Boolean = PosUtils.importDatabase(getApplication(), uri)
 }
