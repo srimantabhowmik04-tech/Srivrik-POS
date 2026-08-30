@@ -1,2 +1,2 @@
-# Srivrik-POS
-Srivrik POS really app
+# Srivik-POS
+Srivik POS really app
