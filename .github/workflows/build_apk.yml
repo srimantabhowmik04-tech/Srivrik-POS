@@ -1,36 +1,40 @@
-name: srivik
-description: "A new Flutter project."
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+name: Build Android APK
 
-version: 1.0.0+1
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
 
-environment:
-  sdk: ^3.5.0
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-dependencies:
-  flutter:
-    sdk: flutter
-  
-  # Icons & UI
-  cupertino_icons: ^1.0.8
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-  # Backend & Database (Firebase / Supabase)
-  # firebase_core: ^3.0.0
-  # firebase_auth: ^5.0.0
-  # cloud_firestore: ^5.0.0
-  # supabase_flutter: ^2.5.0
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-  # Ads / Monetization
-  # google_mobile_ads: ^5.1.0
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
 
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^4.0.0
+      - name: Get Dependencies
+        run: flutter pub get
 
-flutter:
-  uses-material-design: true
+      - name: Build APK
+        run: flutter build apk --release
 
-  # প্রজেক্টে কোনো ছবি বা ফন্ট থাকলে নিচে এভাবে যুক্ত করতে পারেন
-  # assets:
-  #   - assets/images/
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
